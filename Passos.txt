@@ -1,0 +1,121 @@
+->python -m venv venv
+->. venv/Scripts/Activate
+->pip install django
+->pip install django-ninja 
+->django-admin startproject core .
+
+->python manage.py startapp livros
+->INSTALLED_APPS = [   'livros', ]
+->url.py(core)
+from .api import api
+urlpatterns = [ path('api/', api.urls)]
+
+->Criar o arquivo api.py no core do projeto (Aqui iremos criar nossos routers(endpoints) irão redirecionar para cada local.
+
+from ninja import NinjaAPI
+from livros.api import livros_router
+
+api = NinjaAPI() #criação da instancia (variavel) do tipo ninjaapi
+api.add_router('livros', livros_router)
+-------------------------
+->Criar o arquivo api.py do app
+from ninja import Router
+
+livros_router = Router()
+
+@livros_router.post('/')
+def create_livro(resquest):
+    return {'status': 'ok'}
+----------------
+->Criar as models
+
+from django.db import models
+
+class categorias(models.Model):
+    nome = models.CharField(max_length=50)
+
+    def __str__(self):
+        return self.nome
+
+class Livros(models.Model):
+    streaming_choices = (('AK', 'Amazon Kindle'), ('F', 'Físico'))
+
+    nome = models.CharField(max_length=50)
+    streaming = models.CharField(max_length=2, choices=streaming_choices)
+    nota = models.IntegerField(null=True, blank=True)
+    comentarios = models.TextField(null=True, blank=True)
+    categorias = models.ManyToManyField(categorias)
+
+    def __str__(self):
+        return self.nome
+--------------
+->python manage.py makemigrations
+->python manage.py migrate
+-------------
+->admin.py de livros
+from .models import Livros, categorias
+
+# Register your models here.
+admin.site.register(categorias)
+admin.site.register(Livros)
+---------
+->python manage.py createsuperuser
+***************************************Cadastrar os livros pela API**************
+Criação do Schema
+->schemas.py:
+
+from ninja import ModelSchema, Schema
+from .models import Livros
+
+class LivrosSchema(ModelSchema):
+    class Meta:
+        model = Livros
+        fields = ['nome', 'streaming', 'categorias'] #informa os campos que vc deseja que usuário cadastre no formulário
+------------
+Refazer o arquivo api.py (App)
+
+from ninja import Router
+from .schemas import LivrosSchema, AvaliacaoSchema
+from .models import Livros, categorias
+
+livros_router = Router()
+
+@livros_router.post('/')
+def create_livro(request, Livro_schema: LivrosSchema):
+    #print(Livro_schema.dict())
+    nome = Livro_schema.dict()['nome']
+    streaming = Livro_schema.dict()['streaming']
+    categorias = Livro_schema.dict()['categorias']
+
+    if streaming not in ['F', 'AK']:
+        return 400, {'status': 'Erro, Streaming deve ser F ou AK' }
+    livro = Livros(
+        nome=nome,
+        streaming=streaming
+        #categorias=categorias não é possivel salvar campos manytomany, depois que os dois campos já existe.
+    )
+    livro.save()
+
+    for categoria in categorias:
+        categoria_temp = categorias.objetcts.get(id=categoria) # Obtém a categoria pelo ID
+        livro.categorias.add(categoria_temp) # Adiciona a categoria à instância do livro
+
+    return {'status': 'ok'}
+---------------
+Criação do endpoint avaliar_livro
+
+@livros_router.put('/{livro_id}')
+def avaliar_livro(request, livro_id: int, avaliacao_schema: AvaliacaoSchema):#precisamos da nota do livro e do comentário, desta forma precisamos de um esquema
+    comentario = avaliacao_schema.dict()['comentarios']
+    nota = avaliacao_schema.dict()['nota']
+    try:
+        livro = Livros.objects.get(id=livro_id)
+        livro.comentarios = comentario
+        livro.nota = nota
+        livro.save()
+
+        return 200, {'status': 'Avaliação realizada com Sucesso'}
+    except:
+        return 500, {'status', 'Erro interno do servidor'}
+
+-------------------------------------------------------
